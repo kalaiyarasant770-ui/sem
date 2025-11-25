@@ -1,0 +1,83 @@
+
+{
+  "users": [
+    {
+      "username": "niraltekuser",
+      "password": "user@123",
+      "vertical_id": 139,
+      "vertical_name": "Niraltek"
+    },
+    {
+      "username": "bigfootuser",
+      "password": "user@123",
+      "vertical_id": 161,
+      "vertical_name": "BigFoot"
+    },
+    {
+      "username": "ssncollegeuser",
+      "password": "user@123",
+      "vertical_id": 162,
+      "vertical_name": "SSN College"
+    },
+    {
+      "username": "hinehydraulicsuser",
+      "password": "user@123",
+      "vertical_id": 163,
+      "vertical_name": "Hine Hydraulics"
+    },
+    {
+      "username": "swamifeedsuser",
+      "password": "user@123",
+      "vertical_id": 167,
+      "vertical_name": "Swami Feeds Pvt Ltd"
+    },
+    {
+      "username": "mediscanuser",
+      "password": "user@123",
+      "vertical_id": 169,
+      "vertical_name": "MediScan"
+    },
+    {
+      "username": "mysticaluser",
+      "password": "user@123",
+      "vertical_id": 170,
+      "vertical_name": "Mystical ColdStorage"
+    },
+    {
+      "username": "madurasteelsuser",
+      "password": "user@123",
+      "vertical_id": 171,
+      "vertical_name": "MADURA STEELS"
+    },
+    {
+      "username": "srivariuser",
+      "password": "user@123",
+      "vertical_id": 172,
+      "vertical_name": "Srivari Alloys"
+    },
+    {
+      "username": "seoulstoreuser",
+      "password": "user@123",
+      "vertical_id": 173,
+      "vertical_name": "SEOUL STORE"
+    },
+    {
+      "username": "gunasolaruser",
+      "password": "user@123",
+      "vertical_id": 174,
+      "vertical_name": "Guna Solar Project"
+    },
+    {
+      "username": "seasonssuitesuser",
+      "password": "user@123",
+      "vertical_id": 176,
+      "vertical_name": "Seasons Suites"
+    },
+    {
+      "username": "thailanduser",
+      "password": "user@123",
+      "vertical_id": 177,
+      "vertical_name": "Thailand"
+    }
+  ]
+}

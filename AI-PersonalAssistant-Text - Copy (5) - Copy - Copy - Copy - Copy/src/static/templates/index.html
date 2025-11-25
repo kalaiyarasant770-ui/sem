@@ -1,0 +1,74 @@
+<!-- index.html -->
+ 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <title>Enhanced Chiller Assistant</title>
+  <link rel="stylesheet" href="../css/index.css">
+  <!-- <link rel="stylesheet" href="/chatbot/static/css/index.css"> -->
+
+</head>
+
+<body>
+  <div class="logout">
+    <button id="logout-btn">Logout</button>
+  </div>
+
+  <!-- ====================== VERTICAL DROPDOWN ====================== -->
+
+  <div class="background"></div>
+  <button id="chatbot-btn" class="btn neon-pulse">
+    <img src="../images/Devsbot AI.svg" alt="chat" style="width: 60px; height: 60px; top: -5px; position: absolute; right: -8px;" />
+     <!-- <img src="/chatbot/static/images/Devsbot AI.svg" alt="chat" style="width: 60px; height: 60px; top: -5px; position: absolute; right: -8px;" /> -->
+  </button>
+  <div id="chatbot-container">
+    <div id="chatbot-header">
+      <div class="header-sec">
+      <img id="devsBot-logo" src="../images/Devsbot AI.svg" alt="logo" />
+      <!-- <img id="devsBot-logo" src="/chatbot/static/images/Devsbot AI.svg" alt="logo" /> -->
+      <div style="display: flex; flex-direction: column; align-items: flex-start;">
+        <span>Enhanced Assistant</span>
+        <span id="vertical-display" style="font-size: 11px; color: #ccc; margin-top: 2px;"></span>
+      </div>
+      </div>
+      <div class="header-sec">
+        <button id="clear-chat-btn" title="Clear conversation">
+          <i class="fa-solid fa-trash"></i> 
+        </button>
+        <img id="chatbot-close" src="https://img.icons8.com/?size=100&id=3062&format=png&color=000000" alt="close"
+          style="width: 22px; height: 22px; cursor: pointer; float: right; filter: invert(1); margin-right: 15px;" />
+      </div>
+    </div>
+    <div class="session-info" id="sessionInfo">
+      <i class="fa-solid fa-circle-notch fa-spin"></i> Initializing...
+    </div>
+
+    <div class="file-upload">
+      <input type="file" id="fileInput" accept=".pdf,.txt" style="display: none" />
+      <span id="uploadStatus"></span>
+    </div>
+    <div id="chatbot-messages"></div>
+    <div id="chatbot-input">
+      <div class="input-wrapper">
+        <i class="fa-solid fa-paperclip attach-icon" onclick="document.getElementById('fileInput').click()"></i>
+        <input type="text" id="messageInput" placeholder="Enter your message..." />
+      </div>
+      <button id="send-btn">
+        <i class="fa-solid fa-paper-plane"></i>
+      </button>
+    </div>
+  </div>
+
+  <script src="../js/config.js"></script> 
+ <script src="../js/index.js"></script>
+
+  <!-- <script src="/chatbot/static/js/config.js"></script>
+  <script src="/chatbot/static/js/index.js"></script> -->
+  
+  <script src="https://code.iconify.design/3/3.1.1/iconify.min.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!-- login.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Niraltek Solutions | Login</title>
+  <link rel="stylesheet" href="../css/login.css">
+  <!-- <link rel="stylesheet" href="/chatbot/static/css/login.css"> -->
+</head>
+
+<body>
+  <div class="background-glow"></div>
+
+  <div class="login-box">
+    <h2>Niraltek Solutions</h2>
+    <p id="sub-title">Login to continue</p>
+
+    <form id="loginForm">
+      <div>
+        <label for="name">Username</label>
+        <input type="text" id="username" class="input-box" placeholder="Enter your username" required />
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input type="password" id="password" class="input-box" placeholder="Enter your password" required />
+      </div>
+      <p id="message"></p>
+      <button type="submit" id="signInBtn">Sign In</button>
+    </form>
+
+    <div class="footer">
+      © 2025 <span>Niraltek Solutions</span>. All rights reserved.
+    </div>
+  </div>
+  <script src="../js/config.js"></script>
+  <script src="../js/login.js"></script>
+
+  <!-- <script src="/chatbot/static/js/config.js"></script>
+  <script src="/chatbot/static/js/login.js"></script> -->
+</body>
+
+</html>

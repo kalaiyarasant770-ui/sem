@@ -1,0 +1,15 @@
+services:
+  ai_text_app:
+    image: arunniraltek/ai-personalassistant-text:latest
+    container_name: ai_text_app
+    labels:
+      project: ai_text_project
+    restart: always
+    ports:
+      - "8080:8000"
+    networks:
+      - ai_text_network
+      
+networks:
+  ai_text_network:
+    driver: bridge
