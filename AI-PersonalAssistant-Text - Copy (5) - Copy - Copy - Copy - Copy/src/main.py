@@ -1,12 +1,10 @@
 
 
-#25-11-2025 an - kalaiyarasan770@gmail.com claude
+#26-11-2025 an - kalaiyarasan770@gmail.com claude
 
 
 
-
-
-#24-11-2025 = aftrenoon
+#26-11-2025 = morning
 
 
 # main.py
@@ -161,8 +159,6 @@ def load_parameters_for_vertical(vertical_id: int, df_devices: pd.DataFrame) -> 
     except Exception as e:
         logging.error(f"❌ Failed to load parameters for vertical {vertical_id}: {e}")
         return pd.DataFrame(columns=["device_id", "device_name", "pin", "parameter"])
-
-
 
 # === DEVICE TYPE MAPPING (INT → NAME) ===
 DEVICE_TYPE_MAP = {
@@ -440,8 +436,6 @@ def detect_list_devices_query(user_msg: str) -> bool:
 
     return any(p in msg for p in patterns)
 
-
-
 def resolve_device_from_df_regex(df: pd.DataFrame, query: str):
     """..."""
     if df.empty:
@@ -624,27 +618,6 @@ def chat():
             "response": "Query cancelled. How else can I help you?",
             "session_id": session_id
         })
-    
-    # âœ… NEW: Check if message is TRULY time-only (no device, no parameter)
-    from parameter_query import detect_time_only
-
-    time_only_result = detect_time_only(user_message)
-
-    if time_only_result and awaiting_device_input:
-        # User provided time-only update → apply to pending query
-        logging.info(f"   ⏱️ Time-only follow-up detected: {time_only_result}")
-        pending_time_range = time_only_result
-        
-        # Return request for device again WITH new time
-        device_list_msg = f"Got it - time range updated to {time_only_result['start_time']} to {time_only_result['end_time']}.\n\n"
-        device_list_msg += "Now please specify which device:\n"
-        device_list_msg += "\n".join(f"- {d['device_name']}" for d in device_list_for_llm)
-        
-        return jsonify({
-            "response": device_list_msg,
-            "session_id": session_id,
-            "awaiting_device_input": True
-        }), 200
 
     # === 2.5 CHECK FOR FOLLOW-BACK STATE IN CONVERSATION HISTORY ===
     if not session_id:
@@ -652,6 +625,11 @@ def chat():
 
     conversation_history = get_conversation_history(session_id)
 
+    # ✅ INITIALIZE VARIABLES FIRST (before any checks)
+    awaiting_device_input = False
+    pending_parameter_query = None
+    pending_time_range = None
+    
     # ✅ ENHANCED: Extract FULL last parameter context (device + parameter + time)
     last_param_context = None
     for msg in reversed(conversation_history):
@@ -674,13 +652,29 @@ def chat():
                     'time_end': time_end_match.group(1) if time_end_match and time_end_match.group(1) != 'None' else None
                 }
                 logging.info(f"💾 Found FULL param context: {last_param_context}")
-                break        
+                break    
 
-    # ✅ NEW: Detect if user is asking for NEW parameter (not device name)
-    awaiting_device_input = False
-    pending_parameter_query = None
-    pending_time_range = None
+    # ✅ NEW: Check for time-only updates (AFTER all variables initialized)
+    from parameter_query import detect_time_only
+    time_only_result = detect_time_only(user_message)
 
+    # ✅ Handle time-only follow-up for parameter queries
+    if time_only_result and last_param_context:
+        logging.info(f"   ⏱️ Time-only follow-up detected: {time_only_result}")
+        
+        # Update the last_param_context with new time
+        last_param_context['time_start'] = time_only_result['start_time']
+        last_param_context['time_end'] = time_only_result['end_time']
+        
+        logging.info(f"   ✅ Updated time in context: {time_only_result['start_time']} to {time_only_result['end_time']}")
+    
+        # Mark that this query should be treated as parameter query with updated time
+        # We'll use this later when building final_time_info
+        time_only_update_flag = True
+    else:
+        time_only_update_flag = False
+
+    # ✅ Detect if user is asking for NEW parameter (not device name)
     for msg in reversed(conversation_history):
         content = msg.get('content', '')
         if '[FOLLOW_BACK_STATE]' in content and msg.get('role') == 'system':
@@ -733,147 +727,97 @@ def chat():
     if awaiting_device_input:
         logging.info(f"\n🔄 FOLLOW-BACK MODE: User providing device name = '{user_message}'")
         
-        # ✅ USE LLM for fuzzy device matching instead of exact match
+        # ✅ USE LLM for fuzzy device matching
         device_id, device_name, device_type, device_type_name, device_row = resolve_device_from_df_with_llm(
             df_devices, user_message, conversation_history
         )
         
         if not device_id:
             logging.warning(f"   ❌ Device not matched, asking again")
-            # ... retry logic ...
-            return jsonify({...}), 200
+            return jsonify({
+                "response": "Device not found. Please specify a valid device name from the list.",
+                "session_id": session_id
+            }), 200
         
-        # ✅ Device matched! Continue...
         logging.info(f"   ✅ Device matched: {device_name}")
         
-        # Device matched! Proceed with parameter query using restored data
-        is_parameter_query = True
-        needs_device_resolution = False
-
-        #✅ FIX: Extract cluster_id from device_row
-        cluster_id = int(device_row['cluster_id']) if device_row is not None else None
-
-        # ✅ CRITICAL: Ensure ALL device variables are set from matched device_row
-        if device_row is not None:
-            
-            # âœ… CRITICAL FIX: Check if user is switching devices
-            user_msg_lower = user_message.lower()
-            preserve_parameter = False
-
-            # Get previous device name from context
-            previous_device_name = None
-            for msg in reversed(conversation_history):
-                if '[PARAM_CONTEXT]' in msg.get('content', ''):
-                    import re
-                    dev_name_match = re.search(r'device_name="([^"]*)"', msg['content'])
-                    if dev_name_match:
-                        previous_device_name = dev_name_match.group(1).lower()
-                        break
-
-            current_device_name = device_name.lower()
-
-            # Check if device changed
-            device_changed = previous_device_name and (previous_device_name != current_device_name)
-
-            if device_changed:
-                # Device changed → Clear parameter UNLESS user explicitly mentioned it
-                if pending_parameter_query and pending_parameter_query.lower() in user_msg_lower:
-                    preserved_parameter = pending_parameter_query
-                    logging.info(f"„ Device changed BUT user mentioned '{pending_parameter_query}' → preserving")
-                else:
-                    preserved_parameter = None
-                    logging.info(f"   🗑️ Device changed ({previous_device_name} → {current_device_name}) → clearing parameter")
-            else:
-                # Same device → Check if user wants same parameter
-                if 'same' in user_msg_lower or 'also' in user_msg_lower:
-                    preserve_parameter = True
-                    logging.info(f"„ User said 'same'/'also' → preserving parameter")
-                elif pending_parameter_query and pending_parameter_query.lower() in user_msg_lower:
-                    preserve_parameter = True
-                    logging.info(f"  User mentioned '{pending_parameter_query}' → preserving parameter")
+        # ✅ CRITICAL FIX: Get previous parameter context
+        previous_parameter = None
+        previous_time = None
+        for msg in reversed(conversation_history):
+            if '[PARAM_CONTEXT]' in msg.get('content', ''):
+                import re
+                param_match = re.search(r'last_parameter="([^"]*)"', msg['content'])
+                time_start_match = re.search(r'time_start="([^"]*)"', msg['content'])
+                time_end_match = re.search(r'time_end="([^"]*)"', msg['content'])
                 
-                if preserve_parameter:
-                    preserved_parameter = pending_parameter_query
-                    logging.info(f"   💾 Preserved parameter: '{preserved_parameter}'")
-                else:
-                    preserved_parameter = None
-                    logging.info(f"   🗑️ Cleared parameter (no explicit mention)")
-            
-            # ✅ ALWAYS preserve time from pending state
-            preserved_time = pending_time_range
-            logging.info(f"   💾 Preserved time: {preserved_time}")
-
-            device_id = int(device_row['device_id'])
-            device_name = device_row['device_name']
-            device_type = int(device_row['device_type'])
-            device_type_name = device_row['device_type_name']
-            cluster_id = int(device_row['cluster_id'])
-            slave_id = device_row['slave_id']
-            
-            logging.info(f"   ✅ ALL device vars set: ID={device_id}, Name={device_name}, Cluster={cluster_id}")
-            
-            # ✅ CRITICAL: Store in dict with cleared/preserved parameter
-            followback_device_data = {
-                'device_id': device_id,
-                'device_name': device_name,
-                'device_type': device_type,
-                'device_type_name': device_type_name,
-                'cluster_id': cluster_id,
-                'cluster_name': device_row['cluster_name'],
-                'slave_id': slave_id,
-                'preserved_parameter': preserved_parameter,  # ← Use the CLEARED/PRESERVED value
-                'preserved_time': preserved_time
-            }
-            logging.info(f"   💾 Stored in followback_device_data: param={preserved_parameter}")
-            
-            # ✅ PRESERVE parameter and time from pending state
-            preserved_parameter = pending_parameter_query
-            preserved_time = pending_time_range
-            
-            logging.info(f"   💾 Preserved: param='{preserved_parameter}', time={preserved_time}")
-
-            # âœ… CRITICAL FIX: Also clear time if device OR parameter changed
-            if device_changed or not preserved_parameter:
-                # Don't preserve old time - force re-extraction from user query
-                preserved_time = None
-                logging.info(f"   🗑️ Cleared preserved time (device/param changed)")
-            else:
-                preserved_time = pending_time_range
-                logging.info(f"   💾 Preserved time: {preserved_time}")
-
-             #✅ CRITICAL: Store in a persistent dict that won't be lost
-            followback_device_data = {
-                'device_id': device_id,
-                'device_name': device_name,
-                'device_type': device_type,
-                'device_type_name': device_type_name,
-                'cluster_id': cluster_id,
-                'cluster_name': device_row['cluster_name'],
-                'slave_id': slave_id,
-                'preserved_parameter': preserved_parameter,  # ← Use the logic-determined value
-                'preserved_time': preserved_time  # ← Use the cleared/preserved value
-            }
-            logging.info(f"   💾 Stored in followback_device_data dict")
-            # ✅ Store preserved data too
-            followback_device_data['preserved_parameter'] = preserved_parameter
-            followback_device_data['preserved_time'] = preserved_time
-
-        # Mark that we've exited follow-back
-        logging.info(f"   ✅ Follow-back resolved!")
-        logging.info(f"   Device: {device_name}")
-        logging.info(f"   Parameter: {pending_parameter_query}")
-        logging.info(f"   Time: {pending_time_range}")
-        logging.info(f"   Cluster: {cluster_id}")
+                if param_match and param_match.group(1) != 'None':
+                    previous_parameter = param_match.group(1)
+                if time_start_match and time_end_match:
+                    start = time_start_match.group(1)
+                    end = time_end_match.group(1)
+                    if start != 'None' and end != 'None':
+                        previous_time = {
+                            'start_time': start,
+                            'end_time': end,
+                            'source': 'history'
+                        }
+                break
         
-        # Mark that we've exited follow-back by removing marker from conversation for next query
-        #conversation_history = [msg for msg in conversation_history if '[FOLLOW_BACK_STATE]' not in msg.get('content', '')]
-        # ✅ CRITICAL: Remove follow-back marker from Redis (not just local variable)
-        logging.info(f"   🗑️ Removing follow-back marker from conversation history")
+        logging.info(f"   📜 Previous context: param={previous_parameter}, time={previous_time}")
         
-        # Filter out follow-back markers
+        # ✅ PRESERVE parameter and time (don't clear unless user explicitly changes them)
+        preserved_parameter = pending_parameter_query or previous_parameter
+        preserved_time = pending_time_range or previous_time
+        
+        logging.info(f"   💾 Preserving: param='{preserved_parameter}', time={preserved_time}")
+        
+        # Extract device info
+        cluster_id = int(device_row['cluster_id']) if device_row is not None else None
+        slave_id = device_row['slave_id']
+        
+        # ✅ CRITICAL: Validate parameter exists for device
+        if preserved_parameter:
+            from parameter_query import resolve_parameter_to_pin
+            param_info = resolve_parameter_to_pin(cluster_id, device_id, preserved_parameter)
+            
+            if not param_info or param_info.get('ambiguous'):
+                # Parameter doesn't exist for this device
+                from parameter_query import get_available_parameters_for_device
+                available_msg = get_available_parameters_for_device(cluster_id, device_id, device_name)
+                
+                logging.warning(f"   ⚠️ Parameter '{preserved_parameter}' not available for {device_name}")
+                
+                # Store device but ask for valid parameter
+                followback_marker = {
+                    'role': 'system',
+                    'content': f'[FOLLOW_BACK_STATE] device_id="{device_id}" device_name="{device_name}" cluster_id="{cluster_id}" parameter="None" time_start="{preserved_time.get("start_time") if preserved_time else "None"}" time_end="{preserved_time.get("end_time") if preserved_time else "None"}"'
+                }
+                add_message_to_history(session_id, followback_marker['role'], followback_marker['content'])
+                
+                return jsonify({
+                    "response": f"'{preserved_parameter}' is not available for {device_name}.\n\n{available_msg}",
+                    "session_id": session_id,
+                    "awaiting_device_input": True
+                }), 200
+        
+        # ✅ Store device data with preserved parameter and time
+        followback_device_data = {
+            'device_id': device_id,
+            'device_name': device_name,
+            'device_type': device_type,
+            'device_type_name': device_type_name,
+            'cluster_id': cluster_id,
+            'cluster_name': device_row['cluster_name'],
+            'slave_id': slave_id,
+            'preserved_parameter': preserved_parameter,
+            'preserved_time': preserved_time
+        }
+        
+        logging.info(f"   💾 Stored followback_device_data: device={device_name}, param={preserved_parameter}")
+        
+        # Clear follow-back marker from Redis
         cleaned_history = [msg for msg in conversation_history if '[FOLLOW_BACK_STATE]' not in msg.get('content', '')]
-        
-        # Save cleaned history back to Redis
         if redis_client and session_id:
             try:
                 redis_client.delete(f"chat:{session_id}")
@@ -883,21 +827,13 @@ def chat():
             except Exception as e:
                 logging.error(f"   ❌ Failed to clean history: {e}")
         
-        # Also update local variable
         conversation_history = cleaned_history
-        
-        # ✅ Clear follow-back state flags
         awaiting_device_input = False
         pending_parameter_query = None
         pending_time_range = None
-        
-        logging.info(f"   ✅ Follow-back state cleared")
-
-        # ✅ CRITICAL: Keep device variables set - do NOT let them be overwritten later
-        logging.info(f"   🔒 Locking device context: {device_name} (ID: {device_id})")
-        
-        # Set flag to prevent fallback override
         device_locked = True
+        
+        logging.info(f"   ✅ Follow-back resolved with preserved context")
 
         logging.info(f"   ✅ Follow-back resolved!")
         logging.info(f"   Device: {device_name}")
@@ -982,31 +918,59 @@ Return JSON:
     # ✅ NEW: Check for list_devices query
     is_list_devices = detect_list_devices_query(user_message)
 
+    # ✅ CHECK: Is this a device-only query (user wants same parameter for different device)?
+    is_device_only_query = False
+    if device_list_for_llm and last_param_context and last_param_context.get('parameter'):
+        query_lower = user_message.lower()
+        device_names_lower = [d.get('device_name').lower() for d in device_list_for_llm]
+        
+        # Check if query is ONLY a device name (no parameter keywords)
+        param_keywords = ['frequency', 'voltage', 'current', 'power', 'temperature', 
+                        'pressure', 'flow', 'level', 'speed', 'supply', 'return']
+        
+        has_param_keywords = any(kw in query_lower for kw in param_keywords)
+        device_mentioned = any(dn in query_lower for dn in device_names_lower)
+        
+        # If device mentioned but NO parameter keywords = device-only query
+        if device_mentioned and not has_param_keywords and len(query_lower.split()) <= 4:
+            is_device_only_query = True
+            logging.info(f"   🔄 Device-only query detected - will preserve parameter/time")
+
     logging.info(f"QUERY TYPE DETECTION:")
     logging.info(f"  Pure greeting: {is_pure_greeting}")
+    logging.info(f"  Device-only query: {is_device_only_query}")
+    logging.info(f"  Parameter query: {is_parameter_query}")
     logging.info(f"  Name intro: {is_name_intro}")
     logging.info(f"  Advisory: {is_advisory}")
-    logging.info(f"  Parameter query: {is_parameter_query}")
     logging.info(f"  List parameters: {is_list_parameters}")
     logging.info(f"  List devices: {is_list_devices}")
     logging.info(f"  Awaiting device input (follow-back): {awaiting_device_input}")
     logging.info(f"  Needs device resolution: {needs_device_resolution}")
 
-    # ✅ ADD THIS - Clear memory on intent switch
-    if not is_parameter_query and (is_pure_greeting or is_advisory or is_list_parameters or is_list_devices):
-        logging.info(f"🗑️ Clearing parameter context - intent switched")
+    # ✅ ADD THIS - Clear memory on intent switch (BUT NOT for device-only queries)
+    if not is_parameter_query and not is_device_only_query and (is_pure_greeting or is_advisory or is_list_parameters or is_list_devices):
+        logging.info(f"🗑️ Clearing parameter context - intent switched to non-parameter query")
         
         # Remove context markers
         conversation_history = [
             msg for msg in conversation_history 
             if '[PARAM_CONTEXT]' not in msg.get('content', '') and 
-               '[FOLLOW_BACK_STATE]' not in msg.get('content', '')
+            '[FOLLOW_BACK_STATE]' not in msg.get('content', '')
         ]
         awaiting_device_input = False
         pending_parameter_query = None
         pending_time_range = None
         last_param_context = None
-    # ✅ END ADD
+        
+        # Clear from Redis
+        if redis_client and session_id:
+            try:
+                redis_client.delete(f"chat:{session_id}")
+                for msg in conversation_history:
+                    add_message_to_history(session_id, msg['role'], msg['content'])
+                logging.info(f"   ✅ Parameter context cleared from Redis")
+            except Exception as e:
+                logging.error(f"   ❌ Failed to clean Redis: {e}")
 
     # ✅ FIX: Clear stale param context if last query was NOT a parameter query
     if last_param_context and not is_parameter_query:
@@ -1158,6 +1122,24 @@ Return JSON:
                 device_type_name = device_row['device_type_name']
                 needs_device_resolution = False # We have our device!
                 logging.info(f"   ✅ Reusing Device: {device_name} (ID: {device_id}), Cluster: {cluster_id}")
+
+    # ✅ OVERRIDE: Treat device-only queries as parameter queries
+    if is_device_only_query:
+        logging.info(f"🔄 DEVICE-ONLY QUERY - Forcing parameter_query intent")
+        is_parameter_query = True
+        is_metrics = False
+        is_report = False
+        is_advisory = False
+        
+        # Preserve parameter from last context
+        if last_param_context:
+            preserved_parameter = last_param_context['parameter']
+            preserved_time = {
+                'start_time': last_param_context['time_start'],
+                'end_time': last_param_context['time_end'],
+                'source': 'history'
+            }
+            logging.info(f"   💾 Preserved: param='{preserved_parameter}', time={preserved_time}")
 
     # === 4. DEVICE RESOLUTION ===
     if needs_device_resolution and not awaiting_device_input:
@@ -1342,33 +1324,64 @@ Return JSON:
         final_parameter = last_param_context['parameter']
         logging.info(f"   📍 Using PREVIOUS parameter: {final_parameter}")    
 
+    
     # 3. Time resolution
-    final_time_info = None           
+    final_time_info = None    
 
-    if 'followback_device_data' in locals() and followback_device_data.get('preserved_time'):
-        # Use preserved time from followback
+    # ✅ PRIORITY 1: Check for time-only update (highest priority)
+    if 'time_only_update_flag' in locals() and time_only_update_flag and last_param_context:
+        final_time_info = {
+            'start_time': last_param_context['time_start'],
+            'end_time': last_param_context['time_end'],
+            'source': 'time_update'
+        }
+        logging.info(f"   📍 Using TIME UPDATE: {final_time_info}")
+    
+    # ✅ PRIORITY 2: Check for preserved time from followback
+    elif 'followback_device_data' in locals() and followback_device_data.get('preserved_time'):
         final_time_info = followback_device_data['preserved_time']
         logging.info(f"   📍 Using PRESERVED time: {final_time_info}")
+    
+    # ✅ PRIORITY 3: Check for pending time from follow-back
     elif pending_time_range:
-        # Use pending time from follow-back
         final_time_info = pending_time_range
         logging.info(f"   📍 Using PENDING time: {final_time_info}")   
+    
+    # ✅ PRIORITY 4: Extract time from query OR use previous time
     else:
-        # Extract time from current query OR use previous time
         from datetime import datetime as dt
-        current_time = dt.now()     
+        current_time = dt.now()   
 
-        time_prompt = f"""
+        # ✅ NEW: Check for time keywords in query
+        time_keywords = ['past', 'last', 'months', 'days', 'weeks', 'june', 'july', 
+                        'january', 'february', 'march', 'april', 'may', 'august', 
+                        'september', 'october', 'november', 'december', 'today', 'yesterday','day','week','month']
+        
+        query_lower = user_message.lower()
+        has_time_keywords = any(kw in query_lower for kw in time_keywords)
+        
+        # ✅ CRITICAL: If NO time keywords AND previous time exists → USE IT DIRECTLY
+        if not has_time_keywords and last_param_context and last_param_context.get('time_start'):
+            final_time_info = {
+                'start_time': last_param_context['time_start'],
+                'end_time': last_param_context['time_end'],
+                'source': 'history'
+            }
+            logging.info(f"   📍 Using PREVIOUS time (direct): {final_time_info}")
+        else:
+            # Only call LLM if time keywords exist OR no previous time
+            time_prompt = f"""
 Extract time range from query OR use previous time.
 
 Current Query: "{user_message}"
 Current Date: {current_time.strftime('%Y-%m-%d')}
 Previous Time: {last_param_context.get('time_start') if last_param_context else 'None'} to {last_param_context.get('time_end') if last_param_context else 'None'}
+Has Time Keywords: {has_time_keywords}
 
 RULES:
-1. If query has time words (past, months, days, june, july) â†' extract NEW time
-2. If NO time words AND previous time exists â†' USE previous time
-3. If NO time anywhere â†' return null
+1. If query has time words (past, months, days, june, july) → extract NEW time
+2. If NO time words AND previous time exists → USE previous time
+3. If NO time anywhere → return null
 
 Return JSON:
 {{
@@ -1377,44 +1390,44 @@ Return JSON:
     "source": "explicit" or "history" or "none"
 }}
 """
-        try:
-            time_response = openai_client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": time_prompt}],
-                response_format={"type": "json_object"},
-                temperature=0,
-                max_tokens=200
-            )
-            time_data = json.loads(time_response.choices[0].message.content)
-            
-            start_time = time_data.get('start_time')
-            end_time = time_data.get('end_time')
-            time_source = time_data.get('source', 'none')
+            try:
+                time_response = openai_client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[{"role": "user", "content": time_prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                    max_tokens=200
+                )
+                time_data = json.loads(time_response.choices[0].message.content)
+                
+                start_time = time_data.get('start_time')
+                end_time = time_data.get('end_time')
+                time_source = time_data.get('source', 'none')
 
-            if start_time and end_time:
-                final_time_info = {
-                    'start_time': start_time,
-                    'end_time': end_time,
-                    'source': time_source
-                }
-                logging.info(f"   📍 Using NEW time: {final_time_info}")
-            elif last_param_context and last_param_context.get('time_start'):
-                # Fallback to previous time
-                final_time_info = {
-                    'start_time': last_param_context['time_start'],
-                    'end_time': last_param_context['time_end'],
-                    'source': 'history'
-                }
-                logging.info(f"   📍 Using PREVIOUS time: {final_time_info}")    
-        except Exception as e:
-            logging.error(f"   ❌ Time extraction failed: {e}")
-            if last_param_context and last_param_context.get('time_start'):
-                final_time_info = {
-                    'start_time': last_param_context['time_start'],
-                    'end_time': last_param_context['time_end'],
-                    'source': 'history'
-                }
-                logging.info(f"   📍 Using PREVIOUS time (fallback): {final_time_info}")  
+                if start_time and end_time:
+                    final_time_info = {
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'source': time_source
+                    }
+                    logging.info(f"   📍 Using NEW time: {final_time_info}")
+                elif last_param_context and last_param_context.get('time_start'):
+                    # Fallback to previous time
+                    final_time_info = {
+                        'start_time': last_param_context['time_start'],
+                        'end_time': last_param_context['time_end'],
+                        'source': 'history'
+                    }
+                    logging.info(f"   📍 Using PREVIOUS time: {final_time_info}")    
+            except Exception as e:
+                logging.error(f"   ❌ Time extraction failed: {e}")
+                if last_param_context and last_param_context.get('time_start'):
+                    final_time_info = {
+                        'start_time': last_param_context['time_start'],
+                        'end_time': last_param_context['time_end'],
+                        'source': 'history'
+                    }
+                    logging.info(f"   📍 Using PREVIOUS time (fallback): {final_time_info}")
 
     # Build final intent_data
     initial_state = ChatbotState(
@@ -1433,7 +1446,9 @@ Return JSON:
             'cluster_id': final_cluster_id,
             'slave_id': final_slave_id,
             'parameter_name': final_parameter,
-            'time_info': final_time_info or {}
+            'time_info': final_time_info or {},
+            # ✅ ADD THIS - Mark as device-only query
+            'is_device_only': is_device_only_query
         },          
 
         awaiting_device_input=awaiting_device_input,
@@ -1478,7 +1493,6 @@ Return JSON:
         logging.info(f"📦 Download ready: {response_payload['report_id']}")
 
     return jsonify(response_payload)
-
 
 # ==================== ALL OTHER ROUTES (UNCHANGED) ====================
 
