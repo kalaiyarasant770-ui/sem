@@ -1,6 +1,5 @@
 
 
-
 # chatbot.py
 
 import json
@@ -548,7 +547,7 @@ def classify_intent_node(state: ChatbotState) -> ChatbotState:
 
     msg = (state.user_message or "").strip().lower()
 
-    # ✅ STEP 1: Check if preserved data exists AND user message is NOT a new query type
+    # ✅ STEP 1: Check if preserved data exists AND user message is a device name
     has_preserved_data = (
         state.intent_data and 
         state.intent_data.get('parameter_name') and 
@@ -556,26 +555,28 @@ def classify_intent_node(state: ChatbotState) -> ChatbotState:
         state.intent_data.get('time_info').get('start_time')
     )
     
+    # ✅ NEW: Check if it's marked as device-only query from main.py
+    is_device_only = state.intent_data.get('is_device_only', False) if state.intent_data else False
+    
     # Check if user is asking something NEW (not just device name)
     user_msg_lower = (state.user_message or "").lower()
     
     # Keywords that indicate NEW query (not follow-back completion)
     new_query_keywords = [
-        'report', 'excel', 'download', 'performance', 'metrics','cop', 'performs', 'efficiency', 'status' , # report/metrics
-        'what about', 'how about',  # follow-up param
-        'what are', 'list', 'show','pin', 'parameter',  # list queries
-        'hello', 'hi', 'thanks',  # greetings
-        'how to', 'improve', 'optimize','tips',  # advisory
-        'average', 'frequency', 'voltage', 'current', 'power' # common params
+        'report', 'excel', 'download', 'performance', 'metrics','cop', 'performs', 'efficiency', 'status',
+        'what about', 'how about',
+        'what are', 'list', 'show','pin', 'parameter',
+        'hello', 'hi', 'thanks',
+        'how to', 'improve', 'optimize','tips',
+        'average', 'frequency', 'voltage', 'current', 'power'
     ]
     
-    # A "new query" is one that contains keywords AND is longer than just a device name
-    is_new_query = any(kw in user_msg_lower for kw in new_query_keywords) and len(user_msg_lower.split()) > 3
+    # ✅ CRITICAL FIX: If it's a device-only query, don't treat as new query
+    is_new_query = (not is_device_only) and any(kw in user_msg_lower for kw in new_query_keywords) and len(user_msg_lower.split()) > 3
     
     if has_preserved_data and not is_new_query:
-        logging.info("🔄 PRESERVED DATA DETECTED (device-only response)")
+        logging.info("🔄 PRESERVED DATA DETECTED (device-only or follow-back)")
         
-        # Restore the device name from the preserved data, as the user's message is the device name itself
         device_name = state.intent_data.get('device_name')
         state.intent_data['device_name'] = device_name
 
@@ -583,7 +584,7 @@ def classify_intent_node(state: ChatbotState) -> ChatbotState:
         logging.info(f"   Parameter: {state.intent_data.get('parameter_name')}")
         logging.info(f"   Time: {state.intent_data.get('time_info')}")
         
-        # DO NOT re-classify - preserve the data and force parameter_query
+        # Force parameter_query intent
         state.intent_data['intent'] = 'parameter_query'
         state.awaiting_device_input = False
         
@@ -593,7 +594,6 @@ def classify_intent_node(state: ChatbotState) -> ChatbotState:
     # If preserved data exists but it's a NEW query, clear it
     if has_preserved_data and is_new_query:
         logging.info(f"🗑️ Clearing preserved data - detected new query type")
-        # Clear preserved data from intent_data
         state.intent_data.pop('parameter_name', None)
         state.intent_data.pop('time_info', None)
     
@@ -820,10 +820,8 @@ def handle_metrics_node(state: ChatbotState) -> ChatbotState:
                 "message": f"Metrics calculation not yet implemented for {device_type_name} devices."
             }
         }
-    
     logging.info(f"{'='*80}\n")
     return state
-
 
 def handle_advisory_node(state: ChatbotState) -> ChatbotState:
     """Node: Handle advisory queries - NO DEVICE REQUIRED."""
@@ -834,11 +832,7 @@ def handle_advisory_node(state: ChatbotState) -> ChatbotState:
     # query = state['user_message']
     query = state.user_message
     logging.info(f"Query: {query}")
-    
-    # ✅ Advisory does NOT require device - it's general advice
-    # device_name = state['intent_data'].get('device_name', 'your equipment')
-    # device_id = state['intent_data'].get('device_id')
-    
+     
     # Search RAG system for relevant documentation
     rag_results = []
     if rag_system:
@@ -963,7 +957,6 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
     logging.info(f"📍 NODE: handle_parameter_query")
     logging.info(f"{'='*80}")
 
-    # Ensure intent_data exists
     state.intent_data = state.intent_data or {}
     intent_data = state.intent_data
 
@@ -982,13 +975,13 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
     if device_id and parameter_name:
         logging.info(f"✅ All requirements present (device + parameter) → VALIDATE")
         
-        # ✅ NEW: Validate parameter exists for device BEFORE execution
+        # ✅ CRITICAL: Validate parameter exists for device BEFORE execution
         from parameter_query import resolve_parameter_to_pin
         
         param_info = resolve_parameter_to_pin(cluster_id, device_id, parameter_name)
         
-        if not param_info or param_info.get('ambiguous'):
-            # Parameter doesn't exist or ambiguous
+        if not param_info:
+            # Parameter doesn't exist for this device
             from parameter_query import get_available_parameters_for_device
             available_msg = get_available_parameters_for_device(cluster_id, device_id, device_name)
             
@@ -997,16 +990,47 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
             logging.info(f"{'='*80}\n")
             return state
         
-        # Set default time if missing (ONLY if no time in conversation)
-        if not time_info or not time_info.get('start_time'):
-            # Check if time was mentioned anywhere in conversation
-            has_time_in_history = False
-            for msg in state.conversation_history:
-                if any(kw in msg.get('content', '').lower() for kw in ['past', 'months', 'days', 'june', 'july', 'week']):
-                    has_time_in_history = True
-                    break
+        if param_info.get('ambiguous'):
+            # Parameter is ambiguous
+            alternatives = param_info.get('alternatives', [])
+            message = f"Multiple parameters match '{parameter_name}' for {device_name}. Please specify:\n\n"
+            message += "\n".join(f"• {alt}" for alt in alternatives)
             
-            if not has_time_in_history:
+            logging.warning(f"⚠️ Ambiguous parameter match")
+            state.response_data = {"type": "error", "message": message}
+            logging.info(f"{'='*80}\n")
+            return state
+        
+        # ✅ Parameter validated! Set default time if missing
+        if not time_info or not time_info.get('start_time'):
+            # Check for previous time in conversation
+            has_time_in_history = False
+            previous_time = None
+            
+            for msg in reversed(state.conversation_history):
+                if '[PARAM_CONTEXT]' in msg.get('content', ''):
+                    import re
+                    time_start_match = re.search(r'time_start="([^"]*)"', msg['content'])
+                    time_end_match = re.search(r'time_end="([^"]*)"', msg['content'])
+                    
+                    if time_start_match and time_end_match:
+                        start = time_start_match.group(1)
+                        end = time_end_match.group(1)
+                        if start != 'None' and end != 'None':
+                            previous_time = {
+                                'start_time': start,
+                                'end_time': end,
+                                'source': 'history'
+                            }
+                            has_time_in_history = True
+                            break
+            
+            if has_time_in_history and previous_time:
+                time_info = previous_time
+                logging.info(f"⏱️  Using previous time from context: {time_info}")
+                state.intent_data['time_info'] = time_info
+            else:
+                # Use default: last 60 days
                 end_time = datetime.now()
                 start_time = end_time - timedelta(days=60)
                 time_info = {
@@ -1016,7 +1040,7 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
                 logging.info(f"⏱️  Using default time: Last 60 days")
                 state.intent_data['time_info'] = time_info
         
-        # Execute immediately
+        # Execute parameter query
         result = handle_parameter_query(
             user_query=state.user_message,
             device_id=device_id,
@@ -1029,7 +1053,7 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
         if result.get('success'):
             state.response_data = {"type": "parameter_query", "data": result}
             
-            # ✅ ENHANCED: Store FULL context (device + parameter + time) for follow-ups
+            # Store FULL context for follow-ups
             from memory import add_message_to_history
             
             time_start = time_info.get('start_time', 'None') if time_info else 'None'
@@ -1041,7 +1065,6 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
             }
             add_message_to_history(state.session_id, 'system', memory_marker['content'])
             logging.info(f"💾 Stored FULL context: device={device_name}, param={parameter_name}, time={time_start} to {time_end}")
-            # ✅ END ENHANCED
         else:
             state.response_data = {"type": "error", "message": result.get('message', 'Unknown error')}
 
@@ -1052,17 +1075,17 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
     if not device_id:
         logging.info(f"⚠️  Missing device → ACTIVATE FOLLOW-BACK")
         
-        # Store pending state for follow-back
+        # Store pending state
         state.awaiting_device_input = True
         state.pending_parameter_query = parameter_name
         state.pending_time_range = time_info or {}
 
-        # Build device list message from device_list_for_llm
+        # Build device list message
         try:
             df = pd.DataFrame(state.device_list_for_llm or [])
             if not df.empty and "device_name" in df.columns:
                 device_names = df["device_name"].tolist()
-                device_list_msg = "Please mention the device name:\n" + "\n".join(f"- {n}" for n in device_names)
+                device_list_msg = "Please specify which device:\n\n" + "\n".join(f"• {n}" for n in device_names)
             else:
                 device_list_msg = "Please specify which device you are asking about."
         except Exception as e:
@@ -1079,9 +1102,7 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
     if not parameter_name:
         logging.info(f"⚠️  Missing parameter → ASK FOR PARAMETER")
         
-        # Get available parameters for this device
         from parameter_query import get_available_parameters_for_device
-        
         message = get_available_parameters_for_device(cluster_id, device_id, device_name)
         
         state.response_data = {"type": "error", "message": message}
@@ -1092,7 +1113,6 @@ def handle_parameter_query_node(state: ChatbotState) -> ChatbotState:
 
     logging.info(f"{'='*80}\n")
     return state
-
 
 def handle_list_parameters_node(state: ChatbotState) -> ChatbotState:
     """Node: Handle 'what parameters are available?' queries."""
